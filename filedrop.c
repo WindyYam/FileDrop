@@ -25,129 +25,189 @@
 #include <stdint.h>
 #include <ctype.h>
 
-/* link with ws2_32 when using MSVC; with GCC use: -lws2_32 */
 #ifdef _MSC_VER
 #  pragma comment(lib, "ws2_32.lib")
 #endif
 
 /* ── tunables ─────────────────────────────────────────────────────────── */
 #define PORT_DEFAULT  8000
-#define HDR_CAP       16384   /* max HTTP header bytes we buffer            */
-#define IO_CAP        65536   /* socket read chunk                          */
+#define HDR_CAP       16384
+#define IO_CAP        65536
 
 static char g_dir[MAX_PATH];
 static int  g_port = PORT_DEFAULT;
 
-/* ── HTML page ────────────────────────────────────────────────────────── */
-/* JS uses single-quoted strings to keep C escaping manageable.
-   Template literals are rewritten as concatenation.                        */
+/* ── HTML page (Windows 95 aesthetic) ────────────────────────────────── */
 static const char HTML[] =
-"<!DOCTYPE html>\n"
-"<html lang='en'>\n"
+"<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\n"
+"<html>\n"
 "<head>\n"
 "<meta charset='UTF-8'>\n"
 "<meta name='viewport' content='width=device-width, initial-scale=1.0'>\n"
-"<title>FileDrop</title>\n"
-"<link rel='preconnect' href='https://fonts.googleapis.com'>\n"
-"<link href='https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap' rel='stylesheet'>\n"
+"<title>FileDrop v1.0 - File Transfer Utility</title>\n"
 "<style>\n"
-"  :root {\n"
-"    --bg:#0a0a0f; --surface:#12121a; --surface2:#1a1a26; --border:#2a2a40;\n"
-"    --accent:#7c6aff; --accent2:#ff6a9e; --text:#e8e8f0; --muted:#666680;\n"
-"    --success:#4ade80; --danger:#f87171;\n"
-"    --mono:'Space Mono',monospace; --sans:'Syne',sans-serif;\n"
+"  body{\n"
+"    background-color:#008080;\n"
+"    background-image:url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Crect width='2' height='2' fill='%23007070'/%3E%3Crect x='2' y='2' width='2' height='2' fill='%23007070'/%3E%3C/svg%3E\");\n"
+"    font-family:'MS Sans Serif',Arial,sans-serif;\n"
+"    font-size:11px;margin:0;padding:12px;color:#000;\n"
 "  }\n"
-"  *{box-sizing:border-box;margin:0;padding:0}\n"
-"  body{background:var(--bg);color:var(--text);font-family:var(--sans);\n"
-"    min-height:100vh;padding:24px 16px 80px;\n"
-"    background-image:\n"
-"      radial-gradient(ellipse 60% 40% at 20% 10%,rgba(124,106,255,.08) 0%,transparent 60%),\n"
-"      radial-gradient(ellipse 40% 30% at 80% 80%,rgba(255,106,158,.06) 0%,transparent 60%);}\n"
-"  header{text-align:center;margin-bottom:40px;padding-top:16px}\n"
-"  .logo{font-size:2.4rem;font-weight:800;letter-spacing:-1px;\n"
-"    background:linear-gradient(135deg,var(--accent),var(--accent2));\n"
-"    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}\n"
-"  .tagline{font-family:var(--mono);font-size:.72rem;color:var(--muted);\n"
-"    letter-spacing:2px;text-transform:uppercase;margin-top:4px}\n"
-"  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;max-width:900px;margin:0 auto}\n"
-"  @media(max-width:640px){.grid{grid-template-columns:1fr}}\n"
-"  .panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;\n"
-"    padding:24px;position:relative;overflow:hidden}\n"
-"  .panel::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;border-radius:16px 16px 0 0}\n"
-"  .panel.upload::before{background:linear-gradient(90deg,var(--accent),var(--accent2))}\n"
-"  .panel.download::before{background:linear-gradient(90deg,var(--accent2),var(--accent))}\n"
-"  .panel-title{font-size:.7rem;font-family:var(--mono);letter-spacing:3px;\n"
-"    text-transform:uppercase;color:var(--muted);margin-bottom:16px}\n"
-"  .dropzone{border:2px dashed var(--border);border-radius:12px;padding:32px 20px;\n"
-"    text-align:center;cursor:pointer;transition:all .2s;background:var(--surface2);position:relative}\n"
-"  .dropzone:hover,.dropzone.drag-over{border-color:var(--accent);background:rgba(124,106,255,.07)}\n"
+"  .window{background:#d4d0c8;border-top:2px solid #fff;border-left:2px solid #fff;\n"
+"    border-right:2px solid #808080;border-bottom:2px solid #808080;margin-bottom:10px}\n"
+"  .title-bar{background:linear-gradient(90deg,#000080,#1084d0);color:#fff;\n"
+"    font-weight:bold;font-size:11px;padding:3px 6px;\n"
+"    display:flex;align-items:center;justify-content:space-between;user-select:none}\n"
+"  .title-bar-text{display:flex;align-items:center;gap:6px}\n"
+"  .title-bar-buttons{display:flex;gap:2px}\n"
+"  .tb-btn{width:16px;height:14px;background:#d4d0c8;\n"
+"    border-top:1px solid #fff;border-left:1px solid #fff;\n"
+"    border-right:1px solid #808080;border-bottom:1px solid #808080;\n"
+"    font-size:9px;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#000}\n"
+"  .window-body{padding:10px}\n"
+"  .groupbox{border:1px solid #808080;border-top:none;padding:8px;margin-top:10px;position:relative}\n"
+"  .groupbox-label{position:absolute;top:-8px;left:8px;background:#d4d0c8;padding:0 4px;font-weight:bold}\n"
+"  button,.btn{background:#d4d0c8;\n"
+"    border-top:2px solid #fff;border-left:2px solid #fff;\n"
+"    border-right:2px solid #808080;border-bottom:2px solid #808080;\n"
+"    padding:3px 12px;font-family:'MS Sans Serif',Arial,sans-serif;\n"
+"    font-size:11px;cursor:pointer;color:#000;text-decoration:none;\n"
+"    display:inline-block;white-space:nowrap}\n"
+"  button:active{border-top:2px solid #808080;border-left:2px solid #808080;\n"
+"    border-right:2px solid #fff;border-bottom:2px solid #fff}\n"
+"  .dropzone{border-top:1px solid #808080;border-left:1px solid #808080;\n"
+"    border-right:1px solid #fff;border-bottom:1px solid #fff;\n"
+"    background:#fff;padding:20px;text-align:center;cursor:pointer;\n"
+"    position:relative;min-height:80px;\n"
+"    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px}\n"
+"  .dropzone.drag-over{background:#000080;color:#fff}\n"
 "  .dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}\n"
-"  .drop-icon{font-size:2.2rem;margin-bottom:10px;display:block}\n"
-"  .drop-label{font-size:.9rem;font-weight:600;color:var(--text);margin-bottom:4px}\n"
-"  .drop-sub{font-family:var(--mono);font-size:.68rem;color:var(--muted)}\n"
-"  .file-list{margin-top:16px;display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto}\n"
-"  .file-list::-webkit-scrollbar{width:4px}\n"
-"  .file-list::-webkit-scrollbar-track{background:transparent}\n"
-"  .file-list::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}\n"
-"  .file-item{display:flex;align-items:center;gap:10px;padding:10px 12px;\n"
-"    background:var(--surface2);border:1px solid var(--border);border-radius:10px;transition:border-color .2s}\n"
-"  .file-item:hover{border-color:var(--accent)}\n"
-"  .file-icon{font-size:1.1rem;flex-shrink:0}\n"
-"  .file-info{flex:1;min-width:0}\n"
-"  .file-name{font-size:.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}\n"
-"  .file-size{font-family:var(--mono);font-size:.65rem;color:var(--muted);margin-top:2px}\n"
-"  .btn-download{background:rgba(124,106,255,.15);border:1px solid rgba(124,106,255,.3);\n"
-"    color:var(--accent);border-radius:8px;padding:6px 12px;font-family:var(--mono);\n"
-"    font-size:.7rem;cursor:pointer;text-decoration:none;transition:all .15s;\n"
-"    white-space:nowrap;flex-shrink:0}\n"
-"  .btn-download:hover{background:rgba(124,106,255,.3);border-color:var(--accent)}\n"
-"  .progress-container{margin-top:12px;display:flex;flex-direction:column;gap:8px}\n"
-"  .progress-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}\n"
-"  .progress-name{font-size:.75rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}\n"
-"  .progress-pct{font-family:var(--mono);font-size:.68rem;color:var(--muted)}\n"
-"  .progress-bar-bg{height:4px;background:var(--border);border-radius:4px;overflow:hidden}\n"
-"  .progress-bar-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));\n"
-"    border-radius:4px;transition:width .2s}\n"
-"  #toast-container{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);\n"
-"    display:flex;flex-direction:column;gap:8px;z-index:999;pointer-events:none}\n"
-"  .toast{background:var(--surface);border:1px solid var(--border);border-radius:10px;\n"
-"    padding:10px 18px;font-family:var(--mono);font-size:.75rem;white-space:nowrap;\n"
-"    animation:slideUp .3s ease,fadeOut .4s ease 2.6s forwards}\n"
-"  .toast.success{border-color:var(--success);color:var(--success)}\n"
-"  .toast.error{border-color:var(--danger);color:var(--danger)}\n"
-"  @keyframes slideUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}\n"
-"  @keyframes fadeOut{to{opacity:0;transform:translateY(-8px)}}\n"
-"  .empty-state{text-align:center;padding:32px 0 16px;font-family:var(--mono);font-size:.72rem;color:var(--muted)}\n"
-"  .btn-refresh{background:none;border:1px solid var(--border);color:var(--muted);\n"
-"    border-radius:8px;padding:5px 10px;font-family:var(--mono);font-size:.65rem;\n"
-"    cursor:pointer;transition:all .15s;float:right}\n"
-"  .btn-refresh:hover{border-color:var(--accent);color:var(--accent)}\n"
-"  .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}\n"
+"  .drop-icon{font-size:2rem;line-height:1}\n"
+"  .drop-label{font-weight:bold}\n"
+"  .drop-sub{color:#444;font-size:10px}\n"
+"  .dropzone.drag-over .drop-sub{color:#aad}\n"
+"  .file-list{max-height:220px;overflow-y:auto;\n"
+"    border-top:1px solid #808080;border-left:1px solid #808080;\n"
+"    border-right:1px solid #fff;border-bottom:1px solid #fff;background:#fff}\n"
+"  .file-item{display:flex;align-items:center;gap:6px;\n"
+"    padding:3px 6px;border-bottom:1px solid #e8e4dc;cursor:default}\n"
+"  .file-item:hover{background:#000080;color:#fff}\n"
+"  .file-item:hover .file-size{color:#aad}\n"
+"  .file-item:hover .btn-download{color:#ff0}\n"
+"  .file-icon{font-size:1rem;flex-shrink:0}\n"
+"  .file-info{flex:1;min-width:0;overflow:hidden}\n"
+"  .file-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:bold}\n"
+"  .file-size{font-size:10px;color:#666}\n"
+"  .btn-download{background:none;border:none;padding:0;font-size:10px;\n"
+"    color:#000080;cursor:pointer;text-decoration:underline;\n"
+"    font-family:'MS Sans Serif',Arial,sans-serif;flex-shrink:0}\n"
+"  .progress-container{margin-top:8px;display:flex;flex-direction:column;gap:4px}\n"
+"  .progress-header{display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px}\n"
+"  .progress-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:75%}\n"
+"  .progress-pct{color:#444}\n"
+"  .progress-bar-bg{height:12px;\n"
+"    border-top:1px solid #808080;border-left:1px solid #808080;\n"
+"    border-right:1px solid #fff;border-bottom:1px solid #fff;\n"
+"    background:#d4d0c8;overflow:hidden}\n"
+"  .progress-bar-fill{height:100%;\n"
+"    background:repeating-linear-gradient(90deg,#000080 0px,#000080 8px,#1084d0 8px,#1084d0 16px);\n"
+"    transition:width .2s}\n"
+"  .statusbar{background:#d4d0c8;border-top:1px solid #808080;\n"
+"    padding:2px 6px;font-size:10px;color:#444;display:flex;gap:8px}\n"
+"  .status-cell{border-top:1px solid #808080;border-left:1px solid #808080;\n"
+"    border-right:1px solid #fff;border-bottom:1px solid #fff;padding:1px 6px}\n"
+"  .layout{display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:860px;margin:0 auto}\n"
+"  @media(max-width:600px){.layout{grid-template-columns:1fr}}\n"
+"  .app-header{max-width:860px;margin:0 auto 10px}\n"
+"  .menubar{background:#d4d0c8;\n"
+"    border-top:1px solid #fff;border-left:1px solid #fff;\n"
+"    border-right:1px solid #808080;border-bottom:1px solid #808080;\n"
+"    padding:2px 4px;font-size:11px;display:flex;gap:2px;align-items:center}\n"
+"  .menu-item{padding:2px 8px;cursor:default}\n"
+"  .menu-item:hover{background:#000080;color:#fff}\n"
+"  .toolbar{background:#d4d0c8;border-top:1px solid #fff;border-left:1px solid #fff;\n"
+"    padding:3px 4px;display:flex;gap:4px;align-items:center;font-size:10px;color:#444}\n"
+"  .separator{width:1px;height:20px;border-left:1px solid #808080;border-right:1px solid #fff;margin:0 2px}\n"
+"  .empty-state{padding:20px;text-align:center;color:#666;font-style:italic}\n"
+"  .banner{background:#000080;color:#ff0;font-weight:bold;font-size:11px;\n"
+"    padding:2px 0;overflow:hidden;white-space:nowrap}\n"
+"  #toast-container{position:fixed;bottom:16px;right:16px;\n"
+"    display:flex;flex-direction:column;gap:6px;z-index:999;pointer-events:none}\n"
+"  .toast{background:#d4d0c8;\n"
+"    border-top:2px solid #fff;border-left:2px solid #fff;\n"
+"    border-right:2px solid #808080;border-bottom:2px solid #808080;\n"
+"    padding:6px 14px;font-size:11px;display:flex;align-items:center;gap:8px;\n"
+"    animation:popIn .15s ease,fadeOut .3s ease 2.7s forwards;min-width:180px}\n"
+"  @keyframes popIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}\n"
+"  @keyframes fadeOut{to{opacity:0;transform:translateY(6px)}}\n"
 "</style>\n"
 "</head>\n"
 "<body>\n"
-"<header>\n"
-"  <div class='logo'>FileDrop</div>\n"
-"  <div class='tagline'>Local wireless transfer &mdash; no accounts, no cloud</div>\n"
-"</header>\n"
-"<div class='grid'>\n"
-"  <div class='panel upload'>\n"
-"    <div class='panel-title'>&#8593; Upload to PC</div>\n"
-"    <div class='dropzone' id='dropzone'>\n"
-"      <input type='file' id='file-input' multiple>\n"
-"      <span class='drop-icon'>&#128228;</span>\n"
-"      <div class='drop-label'>Drop files here</div>\n"
-"      <div class='drop-sub'>or tap to select</div>\n"
+"<div class='app-header'>\n"
+"  <div class='window' style='margin-bottom:0'>\n"
+"    <div class='title-bar'>\n"
+"      <div class='title-bar-text'>\n"
+"        <span>&#128193;</span> FileDrop v1.0 - Wireless File Transfer Utility\n"
+"      </div>\n"
+"      <div class='title-bar-buttons'>\n"
+"        <span class='tb-btn'>_</span>\n"
+"        <span class='tb-btn'>&#9633;</span>\n"
+"        <span class='tb-btn'>&#10005;</span>\n"
+"      </div>\n"
 "    </div>\n"
-"    <div class='progress-container' id='progress-container'></div>\n"
+"    <div class='menubar'>\n"
+"      <span class='menu-item'><u>F</u>ile</span>\n"
+"      <span class='menu-item'><u>E</u>dit</span>\n"
+"      <span class='menu-item'><u>V</u>iew</span>\n"
+"      <span class='menu-item'><u>T</u>ransfer</span>\n"
+"      <span class='menu-item'><u>H</u>elp</span>\n"
+"    </div>\n"
+"    <div class='toolbar'>\n"
+"      <button onclick='loadFiles()' style='padding:2px 8px;font-size:10px;'>&#128260; Refresh</button>\n"
+"      <div class='separator'></div>\n"
+"      <span>&#128187; Local Wi-Fi Transfer &nbsp;&mdash;&nbsp; No internet required</span>\n"
+"      <div class='separator'></div>\n"
+"      <span id='toolbar-status'>Ready.</span>\n"
+"    </div>\n"
+"    <div class='banner'>\n"
+"      <marquee scrollamount='3'>*** Welcome to FileDrop v1.0 *** Transfer files between PC and phone over your local network *** No internet required *** No accounts needed *** FREE SOFTWARE *** Have a nice day! ***</marquee>\n"
+"    </div>\n"
 "  </div>\n"
-"  <div class='panel download'>\n"
-"    <div class='section-header'>\n"
-"      <div class='panel-title'>&#8595; Download from PC</div>\n"
-"      <button class='btn-refresh' onclick='loadFiles()'>&#8635; refresh</button>\n"
+"</div>\n"
+"<div class='layout'>\n"
+"  <div class='window'>\n"
+"    <div class='title-bar'>\n"
+"      <div class='title-bar-text'><span>&#128228;</span> Send Files to PC</div>\n"
 "    </div>\n"
-"    <div class='file-list' id='file-list'>\n"
-"      <div class='empty-state'>loading files...</div>\n"
+"    <div class='window-body'>\n"
+"      <div class='groupbox' style='margin-top:14px'>\n"
+"        <span class='groupbox-label'>Drop Zone</span>\n"
+"        <div class='dropzone' id='dropzone'>\n"
+"          <input type='file' id='file-input' multiple>\n"
+"          <span class='drop-icon'>&#128190;</span>\n"
+"          <div class='drop-label'>Drop files here to upload</div>\n"
+"          <div class='drop-sub'>- or click to browse -</div>\n"
+"        </div>\n"
+"      </div>\n"
+"      <div class='progress-container' id='progress-container'></div>\n"
+"    </div>\n"
+"    <div class='statusbar'>\n"
+"      <span class='status-cell' id='upload-status'>Awaiting files...</span>\n"
+"    </div>\n"
+"  </div>\n"
+"  <div class='window'>\n"
+"    <div class='title-bar'>\n"
+"      <div class='title-bar-text'><span>&#128229;</span> Get Files from PC</div>\n"
+"    </div>\n"
+"    <div class='window-body'>\n"
+"      <div class='groupbox' style='margin-top:14px'>\n"
+"        <span class='groupbox-label'>Available Files</span>\n"
+"        <div class='file-list' id='file-list'>\n"
+"          <div class='empty-state'>Scanning directory...</div>\n"
+"        </div>\n"
+"      </div>\n"
+"    </div>\n"
+"    <div class='statusbar'>\n"
+"      <span class='status-cell' id='download-status'>Loading...</span>\n"
 "    </div>\n"
 "  </div>\n"
 "</div>\n"
@@ -168,7 +228,7 @@ static const char HTML[] =
 "function uploadSingle(file){\n"
 "  var id='p_'+Math.random().toString(36).slice(2);\n"
 "  var div=document.createElement('div');\n"
-"  div.className='progress-item'; div.id=id;\n"
+"  div.className='progress-item';div.id=id;\n"
 "  div.innerHTML=\n"
 "    '<div class=\"progress-header\">'+\n"
 "      '<span class=\"progress-name\">'+escHtml(file.name)+'</span>'+\n"
@@ -176,6 +236,8 @@ static const char HTML[] =
 "    '</div>'+\n"
 "    '<div class=\"progress-bar-bg\"><div class=\"progress-bar-fill\" id=\"'+id+'_bar\" style=\"width:0%\"></div></div>';\n"
 "  progressContainer.prepend(div);\n"
+"  document.getElementById('upload-status').textContent='Uploading: '+file.name;\n"
+"  document.getElementById('toolbar-status').textContent='Transferring...';\n"
 "  var xhr=new XMLHttpRequest();\n"
 "  xhr.open('POST','/upload');\n"
 "  xhr.upload.onprogress=function(e){\n"
@@ -187,14 +249,18 @@ static const char HTML[] =
 "  };\n"
 "  xhr.onload=function(){\n"
 "    if(xhr.status===200){\n"
-"      document.getElementById(id+'_bar').style.background='var(--success)';\n"
-"      document.getElementById(id+'_pct').textContent='\\u2713';\n"
-"      toast(file.name+' uploaded!','success');\n"
+"      document.getElementById(id+'_bar').style.backgroundImage='none';\n"
+"      document.getElementById(id+'_bar').style.background='#008000';\n"
+"      document.getElementById(id+'_pct').textContent='Done';\n"
+"      document.getElementById('upload-status').textContent='Last: '+file.name;\n"
+"      document.getElementById('toolbar-status').textContent='Ready.';\n"
+"      toast('\\u2713 '+file.name+' uploaded!','success');\n"
 "      setTimeout(function(){div.remove();},3000);\n"
 "      loadFiles();\n"
-"    }else{toast('Failed: '+file.name,'error');div.remove();}\n"
+"    }else{toast('\\u2717 Failed: '+file.name,'error');div.remove();\n"
+"      document.getElementById('toolbar-status').textContent='Error.';}\n"
 "  };\n"
-"  xhr.onerror=function(){toast('Upload error','error');div.remove();};\n"
+"  xhr.onerror=function(){toast('\\u2717 Upload error','error');div.remove();};\n"
 "  var fd=new FormData();\n"
 "  fd.append('file',file);\n"
 "  xhr.send(fd);\n"
@@ -205,7 +271,8 @@ static const char HTML[] =
 "function loadFiles(){\n"
 "  var list=document.getElementById('file-list');\n"
 "  fetch('/files').then(function(r){return r.json();}).then(function(files){\n"
-"    if(!files.length){list.innerHTML='<div class=\"empty-state\">no files available for download</div>';return;}\n"
+"    document.getElementById('download-status').textContent=files.length+' file(s) available';\n"
+"    if(!files.length){list.innerHTML='<div class=\"empty-state\">(No files in directory)</div>';return;}\n"
 "    list.innerHTML=files.map(function(f){\n"
 "      return '<div class=\"file-item\">'+\n"
 "        '<span class=\"file-icon\">'+fileIcon(f.name)+'</span>'+\n"
@@ -213,21 +280,24 @@ static const char HTML[] =
 "          '<div class=\"file-name\" title=\"'+escHtml(f.name)+'\">'+escHtml(f.name)+'</div>'+\n"
 "          '<div class=\"file-size\">'+fmtSize(f.size)+'</div>'+\n"
 "        '</div>'+\n"
-"        '<a class=\"btn-download\" href=\"/download/'+encodeURIComponent(f.name)+'\" download=\"'+escHtml(f.name)+'\">&#8595; get</a>'+\n"
+"        '<a class=\"btn-download\" href=\"/download/'+encodeURIComponent(f.name)+'\" download=\"'+escHtml(f.name)+'\">[Save]</a>'+\n"
 "      '</div>';\n"
 "    }).join('');\n"
-"  }).catch(function(){list.innerHTML='<div class=\"empty-state\">error loading files</div>';});\n"
+"  }).catch(function(){\n"
+"    list.innerHTML='<div class=\"empty-state\">Error reading directory.</div>';\n"
+"    document.getElementById('download-status').textContent='Error.';\n"
+"  });\n"
 "}\n"
 "function fileIcon(name){\n"
 "  var ext=name.split('.').pop().toLowerCase();\n"
-"  var m={jpg:'\\uD83D\\uDDBC',jpeg:'\\uD83D\\uDDBC',png:'\\uD83D\\uDDBC',gif:'\\uD83D\\uDDBC',\n"
-"         webp:'\\uD83D\\uDDBC',heic:'\\uD83D\\uDDBC',\n"
-"         mp4:'\\uD83C\\uDFA6',mov:'\\uD83C\\uDFA6',avi:'\\uD83C\\uDFA6',mkv:'\\uD83C\\uDFA6',\n"
-"         mp3:'\\uD83C\\uDFB5',wav:'\\uD83C\\uDFB5',flac:'\\uD83C\\uDFB5',m4a:'\\uD83C\\uDFB5',\n"
-"         pdf:'\\uD83D\\uDCC4',doc:'\\uD83D\\uDCDD',docx:'\\uD83D\\uDCDD',txt:'\\uD83D\\uDCDD',md:'\\uD83D\\uDCDD',\n"
-"         zip:'\\uD83D\\uDDDC',rar:'\\uD83D\\uDDDC',gz:'\\uD83D\\uDDDC',\n"
-"         py:'\\uD83D\\uDC0D',js:'\\uD83D\\uDCDC',html:'\\uD83C\\uDF10',css:'\\uD83C\\uDFA8'};\n"
-"  return m[ext]||'\\uD83D\\uDCC1';\n"
+"  var m={jpg:'&#128444;',jpeg:'&#128444;',png:'&#128444;',gif:'&#128444;',bmp:'&#128444;',heic:'&#128444;',\n"
+"         mp4:'&#127916;',mov:'&#127916;',avi:'&#127916;',mkv:'&#127916;',\n"
+"         mp3:'&#127925;',wav:'&#127925;',flac:'&#127925;',m4a:'&#127925;',mid:'&#127925;',\n"
+"         pdf:'&#128196;',doc:'&#128221;',docx:'&#128221;',txt:'&#128196;',md:'&#128196;',\n"
+"         zip:'&#128230;',rar:'&#128230;',gz:'&#128230;',\n"
+"         exe:'&#9881;',bat:'&#9881;',\n"
+"         py:'&#128013;',js:'&#128221;',html:'&#127760;',css:'&#127912;'};\n"
+"  return m[ext]||'&#128193;';\n"
 "}\n"
 "function fmtSize(b){\n"
 "  if(b<1024)return b+' B';\n"
@@ -240,7 +310,7 @@ static const char HTML[] =
 "  var c=document.getElementById('toast-container');\n"
 "  var t=document.createElement('div');\n"
 "  t.className='toast '+type;\n"
-"  t.textContent=msg;\n"
+"  t.innerHTML=msg;\n"
 "  c.appendChild(t);\n"
 "  setTimeout(function(){t.remove();},3200);\n"
 "}\n"
@@ -252,7 +322,6 @@ static const char HTML[] =
 
 /* ── low-level network helpers ────────────────────────────────────────── */
 
-/* memmem for Windows (not in MSVC/MinGW stdlib) */
 static const void *mem_find(const void *h, size_t hn,
                               const void *n, size_t nn) {
     if (!nn) return h;
@@ -361,12 +430,10 @@ typedef struct {
     char   path[4096];
     char   content_type[512];
     long long content_length;
-    int    body_off;   /* byte offset of body in the read buffer */
-    int    total_read; /* total bytes in read buffer             */
+    int    body_off;
+    int    total_read;
 } Request;
 
-/* Read from socket until we see \r\n\r\n or buf is full.
-   Returns total bytes read; sets req->body_off.               */
 static int read_request(SOCKET sk, char *buf, int bufsz, Request *req) {
     int total = 0;
     req->body_off = -1;
@@ -384,9 +451,8 @@ static int read_request(SOCKET sk, char *buf, int bufsz, Request *req) {
     }
 
     req->total_read = total;
-    if (req->body_off < 0) return total; /* incomplete */
+    if (req->body_off < 0) return total;
 
-    /* --- parse request line --- */
     const char *cur = buf;
     const char *sp  = strchr(cur, ' ');
     if (!sp) return total;
@@ -406,16 +472,14 @@ static int read_request(SOCKET sk, char *buf, int bufsz, Request *req) {
     req->path[pl] = 0;
     url_decode(req->path);
 
-    /* --- parse headers --- */
     cur = strstr(buf, "\r\n");
     if (!cur) return total;
-    cur += 2; /* skip request line */
+    cur += 2;
 
     while (cur < buf + req->body_off - 2) {
         const char *eol = strstr(cur, "\r\n");
         if (!eol || eol == cur) break;
 
-        /* split at colon */
         const char *colon = (const char *)memchr(cur, ':', eol - cur);
         if (colon) {
             char name[64];
@@ -452,13 +516,11 @@ static void route_index(SOCKET sk) {
 
 /* ── Route: GET /files ────────────────────────────────────────────────── */
 
-/* qsort comparator – case-insensitive filename sort */
 static int cmp_fname(const void *a, const void *b) {
     return _stricmp(*(const char *const *)a, *(const char *const *)b);
 }
 
 static void route_files(SOCKET sk) {
-    /* collect names + sizes */
     enum { MAX_FILES = 4096 };
     static char  names[MAX_FILES][MAX_PATH];
     static long long sizes[MAX_FILES];
@@ -489,11 +551,9 @@ static void route_files(SOCKET sk) {
         FindClose(h);
     }
 
-    /* sort */
     if (count > 1)
         qsort(ptrs, count, sizeof(ptrs[0]), cmp_fname);
 
-    /* build JSON */
     size_t jcap = (size_t)count * (MAX_PATH * 3 + 64) + 8;
     if (jcap < 64) jcap = 64;
     char *json = (char *)malloc(jcap);
@@ -502,7 +562,6 @@ static void route_files(SOCKET sk) {
     int jlen = 0;
     json[jlen++] = '[';
     for (int i = 0; i < count; i++) {
-        /* find original sizes[] index via pointer arithmetic */
         int idx = (int)(ptrs[i] - names[0]) / MAX_PATH;
         char esc[MAX_PATH * 2];
         json_escape(ptrs[i], esc, sizeof(esc));
@@ -521,7 +580,6 @@ static void route_files(SOCKET sk) {
 /* ── Route: GET /download/<name> ─────────────────────────────────────── */
 
 static void route_download(SOCKET sk, const char *raw) {
-    /* basename only (security) */
     const char *base = strrchr(raw, '/');
     base = base ? base + 1 : raw;
     if (!*base) { send_text(sk, 400, "Bad Request", "Empty filename"); return; }
@@ -532,13 +590,11 @@ static void route_download(SOCKET sk, const char *raw) {
     FILE *fp = fopen(full, "rb");
     if (!fp) { send_text(sk, 404, "Not Found", "File not found"); return; }
 
-    /* file size */
     _fseeki64(fp, 0, SEEK_END);
     long long fsz = _ftelli64(fp);
     _fseeki64(fp, 0, SEEK_SET);
 
     char extra[512];
-    /* percent-encode the filename for Content-Disposition */
     char enc_name[MAX_PATH * 3];
     {
         const char *q = base;
@@ -573,7 +629,6 @@ static void route_download(SOCKET sk, const char *raw) {
 
 static void route_upload(SOCKET sk, Request *req,
                           const char *prebuf, int prebuf_len) {
-    /* ── 1. extract boundary ── */
     const char *bp = strstr(req->content_type, "boundary=");
     if (!bp) { send_text(sk, 400, "Bad Request", "No boundary"); return; }
     bp += 9;
@@ -593,21 +648,17 @@ static void route_upload(SOCKET sk, Request *req,
     }
     if (!boundary[0]) { send_text(sk, 400, "Bad Request", "Empty boundary"); return; }
 
-    /* end marker = "\r\n--<boundary>" */
     char em[512];
     int  emlen = snprintf(em, sizeof(em), "\r\n--%s", boundary);
 
-    /* ── 2. working buffer ── */
     int wbcap = IO_CAP * 2 + emlen + 64;
     char *wb  = (char *)malloc(wbcap);
     if (!wb) { send_text(sk, 500, "Internal Server Error", "OOM"); return; }
 
-    /* seed with already-read body bytes */
     int    wblen    = prebuf_len < wbcap ? prebuf_len : wbcap;
     long long remaining = req->content_length - prebuf_len;
     memcpy(wb, prebuf, wblen);
 
-    /* ── 3. helper: read more into wb from socket ── */
 #define REFILL() do { \
     if (remaining > 0 && wblen < wbcap) { \
         int _tr = wbcap - wblen; \
@@ -618,7 +669,6 @@ static void route_upload(SOCKET sk, Request *req,
     } \
 } while(0)
 
-    /* ── 4. find end of multipart part-headers (\r\n\r\n) ── */
     while (!mem_find(wb, wblen, "\r\n\r\n", 4) && remaining > 0)
         REFILL();
 
@@ -629,10 +679,8 @@ static void route_upload(SOCKET sk, Request *req,
         return;
     }
 
-    /* ── 5. extract filename from part headers ── */
     char filename[MAX_PATH] = { 0 };
-    const char *cd = (const char *)mem_find(wb, eoh - wb,
-                                             "filename=\"", 10);
+    const char *cd = (const char *)mem_find(wb, eoh - wb, "filename=\"", 10);
     if (cd) {
         cd += 10;
         const char *end = (const char *)memchr(cd, '"', eoh - cd);
@@ -645,7 +693,6 @@ static void route_upload(SOCKET sk, Request *req,
     }
     if (!filename[0]) strcpy(filename, "upload.bin");
 
-    /* basename only */
     {
         char *p = strrchr(filename, '/');
         if (p) memmove(filename, p + 1, strlen(p));
@@ -653,7 +700,6 @@ static void route_upload(SOCKET sk, Request *req,
         if (p) memmove(filename, p + 1, strlen(p));
     }
 
-    /* ── 6. resolve output path (avoid overwriting) ── */
     char outpath[MAX_PATH];
     snprintf(outpath, sizeof(outpath), "%s\\%s", g_dir, filename);
 
@@ -683,8 +729,6 @@ static void route_upload(SOCKET sk, Request *req,
         return;
     }
 
-    /* ── 7. stream file data ── */
-    /* shift working buffer: file data starts after \r\n\r\n */
     int file_start = (int)(eoh + 4 - wb);
     memmove(wb, wb + file_start, wblen - file_start);
     wblen -= file_start;
@@ -692,7 +736,6 @@ static void route_upload(SOCKET sk, Request *req,
     long long bytes_written = 0;
 
     while (1) {
-        /* search for end marker in current buffer */
         const char *found = (const char *)mem_find(wb, wblen, em, emlen);
         if (found) {
             int chunk = (int)(found - wb);
@@ -701,14 +744,12 @@ static void route_upload(SOCKET sk, Request *req,
             break;
         }
 
-        /* no more socket data? flush & stop */
         if (remaining <= 0) {
             fwrite(wb, 1, wblen, fp);
             bytes_written += wblen;
             break;
         }
 
-        /* write safe portion (keep last emlen-1 bytes for split-marker) */
         int safe = wblen - (emlen - 1);
         if (safe > 0) {
             fwrite(wb, 1, safe, fp);
@@ -758,30 +799,22 @@ static DWORD WINAPI client_thread(LPVOID arg) {
     const char *prebuf    = hbuf + req.body_off;
     int          prebuflen = req.total_read - req.body_off;
 
-    /* ── dispatch ── */
     if (strcmp(req.method, "GET") == 0) {
-
         if (strcmp(req.path, "/") == 0) {
             route_index(sk);
-
         } else if (strcmp(req.path, "/files") == 0) {
             route_files(sk);
-
         } else if (strncmp(req.path, "/download/", 10) == 0) {
             route_download(sk, req.path + 10);
-
         } else {
             send_text(sk, 404, "Not Found", "Not found");
         }
-
     } else if (strcmp(req.method, "POST") == 0) {
-
         if (strcmp(req.path, "/upload") == 0) {
             route_upload(sk, &req, prebuf, prebuflen);
         } else {
             send_text(sk, 404, "Not Found", "Not found");
         }
-
     } else if (strcmp(req.method, "OPTIONS") == 0) {
         send_header(sk, 204, "No Content", "text/plain", 0,
                     "Allow: GET, POST, OPTIONS\r\n");
@@ -797,11 +830,9 @@ static DWORD WINAPI client_thread(LPVOID arg) {
 /* ── main ─────────────────────────────────────────────────────────────── */
 
 int main(int argc, char *argv[]) {
-    /* defaults */
     g_port = PORT_DEFAULT;
     GetCurrentDirectoryA(sizeof(g_dir), g_dir);
 
-    /* parse args */
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
             g_port = atoi(argv[++i]);
@@ -814,7 +845,6 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* resolve to absolute path */
     {
         char abs[MAX_PATH];
         if (GetFullPathNameA(g_dir, MAX_PATH, abs, NULL)) {
@@ -823,17 +853,14 @@ int main(int argc, char *argv[]) {
         }
     }
 
-    /* create directory if it doesn't exist */
     CreateDirectoryA(g_dir, NULL);
 
-    /* init winsock */
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
         fprintf(stderr, "WSAStartup failed\n");
         return 1;
     }
 
-    /* create listening socket */
     SOCKET srv = socket(AF_INET, SOCK_STREAM, 0);
     if (srv == INVALID_SOCKET) {
         fprintf(stderr, "socket() failed: %d\n", WSAGetLastError());
@@ -851,7 +878,7 @@ int main(int argc, char *argv[]) {
     sa.sin_port        = htons((u_short)g_port);
 
     if (bind(srv, (struct sockaddr *)&sa, sizeof(sa)) == SOCKET_ERROR) {
-        fprintf(stderr, "bind() failed – is port %d already in use?\n", g_port);
+        fprintf(stderr, "bind() failed - is port %d already in use?\n", g_port);
         closesocket(srv);
         WSACleanup();
         return 1;
@@ -878,7 +905,6 @@ int main(int argc, char *argv[]) {
         ip, g_port, g_dir);
     fflush(stdout);
 
-    /* accept loop */
     while (1) {
         SOCKET client = accept(srv, NULL, NULL);
         if (client == INVALID_SOCKET) continue;
